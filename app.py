@@ -3,29 +3,32 @@ import pandas as pd
 import plotly.graph_objects as go
 from prophet import Prophet
 
-# Carregar seus dados (ajustar o caminho conforme necessário)
-df_filtrado = pd.read_csv('df_filtrado.csv')
-df_filtrado['data'] = pd.to_datetime(df_filtrado['data'])  # Certifique-se de que a coluna de data está no formato correto
-df_filtrado = df_filtrado.drop_duplicates(subset=['data'])
+# 1. Configuração da página DEVE ser o primeiro comando do Streamlit
+st.set_page_config(layout="wide", page_title="Painel de Séries Temporais")
 
-# Renomear as colunas para "ds" e "y"
-df_filtrado_prophet = df_filtrado[['data', 'quantidade']].copy()
-df_filtrado_prophet.columns = ['ds', 'y']
+# 2. CACHE NOS DADOS: Evita ler o CSV toda vez que você mexer no slider
+@st.cache_data
+def carregar_dados():
+    df = pd.read_csv('df_filtrado.csv')
+    df['data'] = pd.to_datetime(df['data'])
+    # Garantir que os dados estão ordenados por data para o slider funcionar
+    df = df.sort_values(by='data')
+    df = df.drop_duplicates(subset=['data'])
+    return df
 
-# Remover duplicatas no mesmo dia
-df_filtrado_prophet = df_filtrado_prophet.drop_duplicates(subset=['ds'])
-
-
-
-# Inicializar o modelo Prophet
-model_prophet = Prophet()
-
-# Ajustar o modelo aos dados históricos
-model_prophet.fit(df_filtrado_prophet)
+# 3. CACHE NO MODELO: Treina o Prophet apenas uma vez quando o app inicia
+@st.cache_resource
+def treinar_prophet(df):
+    df_prophet = df[['data', 'quantidade']].copy()
+    df_prophet.columns = ['ds', 'y']
+    modelo = Prophet()
+    modelo.fit(df_prophet)
+    return modelo
 
 # Função para plotar série histórica, médias móveis e previsão
 def plotar_serie(df, medias_moveis, data_inicio, data_fim):
-    df_filtrado = df[(df['data'] >= data_inicio) & (df['data'] <= data_fim)]
+    # O .copy() aqui é vital para evitar o erro 'SettingWithCopyWarning' do Pandas
+    df_filtrado = df[(df['data'] >= data_inicio) & (df['data'] <= data_fim)].copy()
     
     fig = go.Figure()
     
@@ -49,7 +52,6 @@ def plotar_serie(df, medias_moveis, data_inicio, data_fim):
     return fig
 
 def main():
-    st.set_page_config(layout="wide")
     st.title('Painel de Séries Temporais')
     st.markdown('Produtos - BRF')
 
@@ -70,11 +72,15 @@ def main():
         unsafe_allow_html=True,
     )
 
+    # Carregar dados e treinar o modelo usando o Cache
+    df_filtrado = carregar_dados()
+    model_prophet = treinar_prophet(df_filtrado)
+
     # Adicionar barra lateral para seleção de médias móveis e sliders de datas
     filtro_medias_moveis = st.sidebar.checkbox('Filtrar Médias Móveis')
     
-    # Converter as datas em uma lista de strings
-    datas_disponiveis = df_filtrado['data'].astype(str).tolist()
+    # Converter as datas em uma lista de strings (pegando apenas a data, sem horas)
+    datas_disponiveis = df_filtrado['data'].dt.date.astype(str).tolist()
     
     indice_data_inicio = st.sidebar.slider('Data de início', 0, len(datas_disponiveis) - 1, 0)
     indice_data_fim = st.sidebar.slider('Data de fim', 0, len(datas_disponiveis) - 1, len(datas_disponiveis) - 1)
@@ -82,28 +88,20 @@ def main():
     data_inicio = pd.to_datetime(datas_disponiveis[indice_data_inicio])
     data_fim = pd.to_datetime(datas_disponiveis[indice_data_fim])
 
+    # Criar lista com médias móveis selecionadas
+    medias_moveis = []
     if filtro_medias_moveis:
         st.sidebar.header('Adicionar Médias Móveis')
-        media_movel_7 = st.sidebar.checkbox('Média Móvel de 7 dias')
-        media_movel_15 = st.sidebar.checkbox('Média Móvel de 15 dias')
-        media_movel_30 = st.sidebar.checkbox('Média Móvel de 30 dias')
-        
-        # Criar lista com médias móveis selecionadas
-        medias_moveis = []
-        if media_movel_7:
+        if st.sidebar.checkbox('Média Móvel de 7 dias'):
             medias_moveis.append('Média Móvel de 7 dias')
-        if media_movel_15:
+        if st.sidebar.checkbox('Média Móvel de 15 dias'):
             medias_moveis.append('Média Móvel de 15 dias')
-        if media_movel_30:
+        if st.sidebar.checkbox('Média Móvel de 30 dias'):
             medias_moveis.append('Média Móvel de 30 dias')
 
-        # Exibir gráfico com médias móveis selecionadas
-        fig = plotar_serie(df_filtrado, medias_moveis, data_inicio, data_fim)
-        st.plotly_chart(fig)
-    else:
-        # Exibir gráfico sem médias móveis
-        fig = plotar_serie(df_filtrado, [], data_inicio, data_fim)
-        st.plotly_chart(fig)
+    # Exibir gráfico da série histórica
+    fig = plotar_serie(df_filtrado, medias_moveis, data_inicio, data_fim)
+    st.plotly_chart(fig, use_container_width=True)
 
     # Botão para plotar previsão dos próximos 15 dias
     if st.button('Plotar Previsão para os Próximos 15 Dias'):
@@ -117,10 +115,10 @@ def main():
         # Adicionar previsão para os próximos 15 dias ao gráfico
         fig_forecast = go.Figure()
         fig_forecast.add_trace(go.Scatter(x=df_filtrado['data'], y=df_filtrado['quantidade'], mode='lines+markers', name='Série Histórica'))
-        fig_forecast.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Previsão'))
+        fig_forecast.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Previsão (15 dias)'))
 
         fig_forecast.update_layout(title='Série Histórica vs. Previsão para os Próximos 15 Dias', xaxis_title='Data', yaxis_title='Quantidade')
-        st.plotly_chart(fig_forecast)
+        st.plotly_chart(fig_forecast, use_container_width=True)
 
 if __name__ == "__main__":
     main()
