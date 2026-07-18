@@ -1,7 +1,8 @@
 streamlit
 pandas
 plotly
-prophet==1.1.5
+numpy<2.0.0
+prophet==1.1.5  
 
 # altair==4.2.2
 # attrs==23.2.0
