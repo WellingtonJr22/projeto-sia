@@ -1,0 +1,10 @@
+name: app-prophet
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - streamlit
+  - pandas
+  - plotly
+  - numpy<2.0.0
+  - prophet
