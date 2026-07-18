@@ -34,7 +34,7 @@ def gerar_previsao(df, dias_futuros=15):
     future_dates = modelo.make_future_dataframe(periods=dias_futuros)
     forecast = modelo.predict(future_dates)
     
-    # Retorna o DataFrame final (O Streamlit faz cache de DataFrames perfeitamente)
+    # Retorna o DataFrame final
     return forecast
 
 def plotar_serie(df, medias_moveis, data_inicio, data_fim):
@@ -95,14 +95,13 @@ def main():
     # Botão de Previsão
     if st.button('Plotar Previsão para os Próximos 15 Dias'):
         with st.spinner("Treinando modelo e gerando previsão..."):
-            # Chama a função que treina e devolve o DataFrame (com cache)
             forecast = gerar_previsao(df_filtrado, dias_futuros=15)
 
             fig_forecast = go.Figure()
             # Dados originais
             fig_forecast.add_trace(go.Scatter(x=df_filtrado['data'], y=df_filtrado['quantidade'], mode='lines+markers', name='Série Histórica'))
             
-            # Linha de previsão do Prophet (que inclui o passado e o futuro)
+            # Linha de previsão do Prophet
             fig_forecast.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Previsão do Modelo', line=dict(color='orange')))
 
             fig_forecast.update_layout(title='Série Histórica vs. Previsão para os Próximos 15 Dias', xaxis_title='Data', yaxis_title='Quantidade')
