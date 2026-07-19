@@ -22,6 +22,11 @@ def carregar_dados():
 # 2. NOVA ABORDAGEM: Fazer cache apenas da Tabela de Previsão
 @st.cache_data
 def gerar_previsao(df, dias_futuros=15):
+    # --- A MÁGICA ACONTECE AQUI ---
+    # Força o download do motor matemático C++ caso o Streamlit não o tenha instalado
+    import cmdstanpy
+    cmdstanpy.install_cmdstan()
+    
     # Prepara os dados pro Prophet
     df_prophet = df[['data', 'quantidade']].copy()
     df_prophet.columns = ['ds', 'y']
@@ -94,7 +99,8 @@ def main():
 
     # Botão de Previsão
     if st.button('Plotar Previsão para os Próximos 15 Dias'):
-        with st.spinner("Treinando modelo e gerando previsão..."):
+        # Mudei a mensagem do spinner para avisar que a primeira vez demora um pouquinho mais
+        with st.spinner("Instalando dependências e gerando previsão (isso pode levar alguns segundos na primeira vez)..."):
             forecast = gerar_previsao(df_filtrado, dias_futuros=15)
 
             fig_forecast = go.Figure()
