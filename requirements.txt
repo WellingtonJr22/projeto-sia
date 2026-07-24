@@ -1,7 +1,5 @@
-streamlit
-pandas
-plotly
-numpy<2.0.0
-prophet==1.1.5
-cmdstanpy==1.2.2
-holidays>=0.25
+streamlit==1.45.1
+pandas==2.2.3
+numpy==1.26.4
+plotly==6.0.1
+statsmodels==0.14.2
