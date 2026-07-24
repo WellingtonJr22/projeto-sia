@@ -1,113 +1,400 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from prophet import Prophet
-import logging
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
-# Silenciar logs internos do Prophet que causam conflito no Streamlit Cloud
-logging.getLogger('prophet').setLevel(logging.WARNING)
-logging.getLogger('cmdstanpy').setLevel(logging.WARNING)
+st.set_page_config(
+    layout="wide",
+    page_title="Painel de Séries Temporais"
+)
 
-st.set_page_config(layout="wide", page_title="Painel de Séries Temporais")
+# ===========================
+# CARREGAR DADOS
+# ===========================
 
-# 1. Carregar Dados
 @st.cache_data
 def carregar_dados():
-    df = pd.read_csv('df_filtrado.csv')
-    df['data'] = pd.to_datetime(df['data'])
-    df = df.sort_values(by='data')
-    df = df.drop_duplicates(subset=['data'])
+
+    df = pd.read_csv("df_filtrado.csv")
+
+    df["data"] = pd.to_datetime(df["data"])
+
+    df = df.sort_values("data")
+
+    df = df.drop_duplicates(subset="data")
+
+    df = df.dropna(subset=["quantidade"])
+
     return df
 
-# 2. NOVA ABORDAGEM: Fazer cache apenas da Tabela de Previsão
+
+# ===========================
+# PREVISÃO
+# ===========================
+
 @st.cache_data
 def gerar_previsao(df, dias_futuros=15):
-    # Prepara os dados pro Prophet
-    df_prophet = df[['data', 'quantidade']].copy()
-    df_prophet.columns = ['ds', 'y']
-    
-    # Treina o modelo isoladamente
-    modelo = Prophet()
-    modelo.fit(df_prophet)
-    
-    # Gera as datas futuras e prevê
-    future_dates = modelo.make_future_dataframe(periods=dias_futuros)
-    forecast = modelo.predict(future_dates)
-    
-    # Retorna o DataFrame final
-    return forecast
 
-def plotar_serie(df, medias_moveis, data_inicio, data_fim):
-    df_filtrado = df[(df['data'] >= data_inicio) & (df['data'] <= data_fim)].copy()
-    
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df_filtrado['data'], y=df_filtrado['quantidade'], mode='lines+markers', name='Série Histórica'))
+    serie = df["quantidade"]
 
-    for media in medias_moveis:
-        if media == 'Média Móvel de 7 dias':
-            df_filtrado['media_movel_7'] = df_filtrado['quantidade'].rolling(window=7).mean()
-            fig.add_trace(go.Scatter(x=df_filtrado['data'], y=df_filtrado['media_movel_7'], mode='lines', name='Média 7 dias'))
-        elif media == 'Média Móvel de 15 dias':
-            df_filtrado['media_movel_15'] = df_filtrado['quantidade'].rolling(window=15).mean()
-            fig.add_trace(go.Scatter(x=df_filtrado['data'], y=df_filtrado['media_movel_15'], mode='lines', name='Média 15 dias'))
-        elif media == 'Média Móvel de 30 dias':
-            df_filtrado['media_movel_30'] = df_filtrado['quantidade'].rolling(window=30).mean()
-            fig.add_trace(go.Scatter(x=df_filtrado['data'], y=df_filtrado['media_movel_30'], mode='lines', name='Média 30 dias'))
+    try:
 
-    fig.update_layout(title='Sadia', xaxis_title='Data', yaxis_title='Quantidade')
-    return fig
+        modelo = ExponentialSmoothing(
+            serie,
+            trend="add",
+            seasonal=None
+        )
 
-def main():
-    st.title('Painel de Séries Temporais')
-    st.markdown('Produtos - BRF')
+        ajuste = modelo.fit()
 
-    st.markdown(
-        """
-        <style>
-            .css-3mn07m { background-color: #f0f0f0; color: black; }
-            .css-1bglu7e { background-color: #191970; color: white; }
-        </style>
-        """, unsafe_allow_html=True
+        previsao = ajuste.forecast(dias_futuros)
+
+    except:
+
+        modelo = ExponentialSmoothing(
+            serie,
+            trend=None,
+            seasonal=None
+        )
+
+        ajuste = modelo.fit()
+
+        previsao = ajuste.forecast(dias_futuros)
+
+    datas_futuras = pd.date_range(
+        start=df["data"].max() + pd.Timedelta(days=1),
+        periods=dias_futuros,
+        freq="D"
     )
 
-    df_filtrado = carregar_dados()
+    forecast = pd.DataFrame({
+        "ds": datas_futuras,
+        "yhat": previsao.values
+    })
 
-    filtro_medias_moveis = st.sidebar.checkbox('Filtrar Médias Móveis')
-    datas_disponiveis = df_filtrado['data'].dt.date.astype(str).tolist()
-    
-    indice_data_inicio = st.sidebar.slider('Data de início', 0, len(datas_disponiveis) - 1, 0)
-    indice_data_fim = st.sidebar.slider('Data de fim', 0, len(datas_disponiveis) - 1, len(datas_disponiveis) - 1)
+    return forecast
 
-    data_inicio = pd.to_datetime(datas_disponiveis[indice_data_inicio])
-    data_fim = pd.to_datetime(datas_disponiveis[indice_data_fim])
 
-    medias_moveis = []
-    if filtro_medias_moveis:
-        st.sidebar.header('Adicionar Médias Móveis')
-        if st.sidebar.checkbox('Média Móvel de 7 dias'): medias_moveis.append('Média Móvel de 7 dias')
-        if st.sidebar.checkbox('Média Móvel de 15 dias'): medias_moveis.append('Média Móvel de 15 dias')
-        if st.sidebar.checkbox('Média Móvel de 30 dias'): medias_moveis.append('Média Móvel de 30 dias')
+# ===========================
+# HISTÓRICO
+# ===========================
 
-    # Gráfico histórico normal
-    fig = plotar_serie(df_filtrado, medias_moveis, data_inicio, data_fim)
-    st.plotly_chart(fig, use_container_width=True)
+def plotar_serie(df, medias_moveis, data_inicio, data_fim):
 
-    # Botão de Previsão
-    if st.button('Plotar Previsão para os Próximos 15 Dias'):
-        # Mensagem do spinner de volta ao normal
-        with st.spinner("Gerando previsão..."):
-            forecast = gerar_previsao(df_filtrado, dias_futuros=15)
+    df = df[
+        (df["data"] >= data_inicio)
+        &
+        (df["data"] <= data_fim)
+    ].copy()
 
-            fig_forecast = go.Figure()
-            # Dados originais
-            fig_forecast.add_trace(go.Scatter(x=df_filtrado['data'], y=df_filtrado['quantidade'], mode='lines+markers', name='Série Histórica'))
-            
-            # Linha de previsão do Prophet
-            fig_forecast.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Previsão do Modelo', line=dict(color='orange')))
+    fig = go.Figure()
 
-            fig_forecast.update_layout(title='Série Histórica vs. Previsão para os Próximos 15 Dias', xaxis_title='Data', yaxis_title='Quantidade')
-            
-            st.plotly_chart(fig_forecast, use_container_width=True)
+    fig.add_trace(
+
+        go.Scatter(
+
+            x=df["data"],
+            y=df["quantidade"],
+
+            mode="lines+markers",
+
+            name="Histórico"
+
+        )
+
+    )
+
+    if "7" in medias_moveis:
+
+        df["mm7"] = df["quantidade"].rolling(7).mean()
+
+        fig.add_trace(
+
+            go.Scatter(
+
+                x=df["data"],
+                y=df["mm7"],
+
+                mode="lines",
+
+                name="MM 7"
+
+            )
+
+        )
+
+    if "15" in medias_moveis:
+
+        df["mm15"] = df["quantidade"].rolling(15).mean()
+
+        fig.add_trace(
+
+            go.Scatter(
+
+                x=df["data"],
+                y=df["mm15"],
+
+                mode="lines",
+
+                name="MM 15"
+
+            )
+
+        )
+
+    if "30" in medias_moveis:
+
+        df["mm30"] = df["quantidade"].rolling(30).mean()
+
+        fig.add_trace(
+
+            go.Scatter(
+
+                x=df["data"],
+                y=df["mm30"],
+
+                mode="lines",
+
+                name="MM 30"
+
+            )
+
+        )
+
+    fig.update_layout(
+
+        title="Série Histórica",
+
+        xaxis_title="Data",
+
+        yaxis_title="Quantidade"
+
+    )
+
+    return fig
+
+# ===========================
+# MAIN
+# ===========================
+
+def main():
+
+    st.title("📈 Painel de Séries Temporais")
+
+    st.markdown("### Produtos - BRF")
+
+    df = carregar_dados()
+
+    # ------------------------
+    # SIDEBAR
+    # ------------------------
+
+    st.sidebar.header("Filtros")
+
+    datas = df["data"].dt.date
+
+    data_inicio = st.sidebar.date_input(
+        "Data Inicial",
+        value=datas.min(),
+        min_value=datas.min(),
+        max_value=datas.max()
+    )
+
+    data_fim = st.sidebar.date_input(
+        "Data Final",
+        value=datas.max(),
+        min_value=datas.min(),
+        max_value=datas.max()
+    )
+
+    medias = []
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Médias Móveis")
+
+    if st.sidebar.checkbox("7 dias"):
+        medias.append("7")
+
+    if st.sidebar.checkbox("15 dias"):
+        medias.append("15")
+
+    if st.sidebar.checkbox("30 dias"):
+        medias.append("30")
+
+    data_inicio = pd.to_datetime(data_inicio)
+    data_fim = pd.to_datetime(data_fim)
+
+    # ------------------------
+    # DADOS FILTRADOS
+    # ------------------------
+
+    df_filtrado = df[
+        (df["data"] >= data_inicio)
+        &
+        (df["data"] <= data_fim)
+    ].copy()
+
+    if df_filtrado.empty:
+
+        st.warning("Nenhum registro encontrado para o período selecionado.")
+
+        return
+
+    # ------------------------
+    # KPIs
+    # ------------------------
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "Quantidade Total",
+        f"{df_filtrado['quantidade'].sum():,.0f}"
+    )
+
+    c2.metric(
+        "Média",
+        f"{df_filtrado['quantidade'].mean():,.2f}"
+    )
+
+    c3.metric(
+        "Máximo",
+        f"{df_filtrado['quantidade'].max():,.0f}"
+    )
+
+    st.divider()
+
+    # ------------------------
+    # HISTÓRICO
+    # ------------------------
+
+    fig = plotar_serie(
+        df_filtrado,
+        medias,
+        data_inicio,
+        data_fim
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    st.divider()
+
+    # ------------------------
+    # PREVISÃO
+    # ------------------------
+
+    if st.button(
+        "🔮 Plotar previsão dos próximos 15 dias",
+        use_container_width=True
+    ):
+
+        with st.spinner("Calculando previsão..."):
+
+            forecast = gerar_previsao(
+                df_filtrado,
+                dias_futuros=15
+            )
+
+
+            # ==========================
+            # GRÁFICO HISTÓRICO + PREVISÃO
+            # ==========================
+
+            fig_previsao = go.Figure()
+
+            # Histórico
+            fig_previsao.add_trace(
+                go.Scatter(
+                    x=df_filtrado["data"],
+                    y=df_filtrado["quantidade"],
+                    mode="lines+markers",
+                    name="Histórico",
+                    line=dict(color="royalblue")
+                )
+            )
+
+            # Previsão
+            fig_previsao.add_trace(
+                go.Scatter(
+                    x=forecast["ds"],
+                    y=forecast["yhat"],
+                    mode="lines+markers",
+                    name="Previsão",
+                    line=dict(color="orange", dash="dash")
+                )
+            )
+
+            fig_previsao.update_layout(
+                title="Histórico + Previsão dos Próximos 15 Dias",
+                xaxis_title="Data",
+                yaxis_title="Quantidade",
+                hovermode="x unified",
+                template="plotly_white",
+                height=600
+            )
+
+            st.plotly_chart(
+                fig_previsao,
+                use_container_width=True
+            )
+
+            # ==========================
+            # TABELA DA PREVISÃO
+            # ==========================
+
+            tabela = forecast.copy()
+
+            tabela["ds"] = tabela["ds"].dt.strftime("%d/%m/%Y")
+            tabela["yhat"] = tabela["yhat"].round(0).astype(int)
+
+            st.subheader("Previsão dos próximos 15 dias")
+
+            st.dataframe(
+                tabela.rename(
+                    columns={
+                        "ds": "Data",
+                        "yhat": "Quantidade Prevista"
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            # ==========================
+            # DOWNLOAD CSV
+            # ==========================
+
+            csv = tabela.rename(
+                columns={
+                    "ds": "Data",
+                    "yhat": "Quantidade Prevista"
+                }
+            ).to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                "📥 Baixar previsão em CSV",
+                csv,
+                file_name="previsao_15_dias.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+    # ------------------------
+    # RODAPÉ
+    # ------------------------
+
+    st.divider()
+
+    st.caption(
+        "Painel desenvolvido em Streamlit • Modelo de previsão utilizando Exponential Smoothing."
+    )
+
+
+# ===========================
+# EXECUÇÃO
+# ===========================
 
 if __name__ == "__main__":
     main()
